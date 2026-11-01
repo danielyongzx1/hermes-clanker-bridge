@@ -1,0 +1,8 @@
+{
+  "name": "hermes-clanker-bridge",
+  "label": "Clanker bridge",
+  "description": "Pairing details for the Clanker phone app.",
+  "tab": { "path": "/hermes-clanker-bridge", "hidden": true },
+  "entry": "dist/index.js",
+  "api": "plugin_api.py"
+}

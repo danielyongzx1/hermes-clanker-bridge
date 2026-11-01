@@ -1,0 +1,24 @@
+name: hermes-clanker-bridge
+version: "0.1.0"
+description: >-
+  Use this Hermes agent from the Clanker phone app: streamed replies, approvals, model switching and
+  file transfer. Runs the Clanker bridge with the gateway; pair from Settings → Plugins.
+author: Daniel Yong
+license: MIT
+homepage: https://github.com/danielyongzx1/hermes-clanker-bridge
+kind: standalone
+tags: [mobile, remote, clanker]
+config_schema:
+  port:
+    type: int
+    description: Port the Clanker app connects to. Empty uses 8787, or the imported bridge's port.
+  listen_address:
+    type: str
+    default: 0.0.0.0
+    description: Address to listen on. 0.0.0.0 accepts your LAN/VPN; 127.0.0.1 limits it to this PC.
+  import_from:
+    type: str
+    default: ""
+    description: >-
+      Folder of a bridge you ran from a Clanker checkout (its tools/remote-bridge), to take over its
+      token, chats and files. Stop that bridge first.
