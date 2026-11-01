@@ -1,5 +1,5 @@
 name: hermes-clanker-bridge
-version: "0.1.0"
+version: "0.1.1"
 description: >-
   Use this Hermes agent from the Clanker phone app: streamed replies, approvals, model switching and
   file transfer. Runs the Clanker bridge with the gateway; pair from Settings → Plugins.

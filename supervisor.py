@@ -30,6 +30,7 @@ DEFAULT_PORT = 8787
 MIN_NODE_MAJOR = 22
 RESTART_DELAY = 5.0
 WAIT_DELAY = 10.0
+LOCK_RETRY = 2.0
 MAX_LOG_BYTES = 1_000_000
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # The bridge gets these from the gateway's environment and nothing else, so provider keys and other
@@ -65,12 +66,21 @@ def read_json(path: Path):
 
 
 def write_json(path: Path, value) -> None:
-    """Atomically, readable only by this user."""
-    tmp = path.with_name(path.name + ".tmp")
+    """Atomically, readable only by this user. Windows refuses to replace a file while a reader
+    (the settings page) has it open, so that is retried briefly."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as handle:
         json.dump(value, handle)
-    os.replace(tmp, path)
+    for attempt in range(20):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 19:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
 
 
 def read_env_file(path: Path) -> dict:
@@ -274,16 +284,13 @@ class Supervisor:
         self._thread: Optional[threading.Thread] = None
         self._process: Optional[subprocess.Popen] = None
         self._guard = threading.Lock()
+        self._locked = False
 
-    def start(self) -> bool:
-        """Begins supervising; False when another process already runs this profile's bridge."""
+    def start(self) -> None:
+        """Begins supervising in the background, once this supervisor holds the profile's lock."""
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        if not self._lock.acquire():
-            log.info("Clanker bridge: another Hermes process already runs it for this profile")
-            return False
         self._thread = threading.Thread(target=self._run, name=f"{PLUGIN_ID}-supervisor", daemon=True)
         self._thread.start()
-        return True
 
     def stop(self) -> None:
         if self._stopping.is_set():
@@ -292,8 +299,9 @@ class Supervisor:
         self._terminate()
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=15)
-        self._status("stopped")
-        self._lock.release()
+        if self._locked:
+            self._status("stopped")
+            self._lock.release()
 
     def _status(self, state: str, error: str = "", **extra) -> None:
         try:
@@ -305,6 +313,17 @@ class Supervisor:
         self._stopping.wait(seconds)
 
     def _run(self) -> None:
+        # Hermes loads a plugin several times as the gateway starts, and a new copy registers before
+        # the old one unloads. So the new one waits for the old to stop and release the lock, rather
+        # than giving up. Another process with the lock (a second gateway) keeps it waiting too.
+        while not self._lock.acquire():
+            if self._stopping.wait(LOCK_RETRY):
+                return
+        self._locked = True
+        if self._stopping.is_set():
+            self._lock.release()
+            self._locked = False
+            return
         while not self._stopping.is_set():
             try:
                 delay = self._run_once()

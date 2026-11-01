@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.1
+
+- Fix the bridge not starting after a gateway restart: Hermes loads a plugin several times as the gateway starts, and a newer copy gave up while an older one still held the profile's lock. It now waits and takes over when the older copy unloads.
+- Retry status and pairing writes that Windows refuses while the settings page is reading them.
+
 ## 0.1.0
 
 - Run the Clanker bridge as a Hermes plugin: the gateway starts it on Hermes's own Node, keeps it running and stops it with itself. Only one gateway per profile runs it.

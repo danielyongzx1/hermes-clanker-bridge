@@ -40,7 +40,11 @@ async function publish() {
   if (body === published) return;
   const file = path.join(config.dataDir, 'pairing.json');
   await writeFile(`${file}.tmp`, body, { mode: 0o600 });
-  await rename(`${file}.tmp`, file);
+  // Windows refuses to replace a file while the settings page is reading it.
+  for (let attempt = 0; ; attempt++) {
+    try { await rename(`${file}.tmp`, file); break; }
+    catch (error) { if (attempt >= 19 || !['EPERM', 'EBUSY', 'EACCES'].includes(error.code)) throw error; await new Promise((resolve) => setTimeout(resolve, 50)); }
+  }
   await writePairingPage(path.join(config.dataDir, 'pairing.html'), pairing);
   published = body;
 }

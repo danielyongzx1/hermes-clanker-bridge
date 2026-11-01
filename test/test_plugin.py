@@ -154,9 +154,10 @@ class RegisterTests(unittest.TestCase):
     def test_only_the_gateway_starts_the_bridge(self):
         started = []
         original = plugin.Supervisor
-        plugin.Supervisor = lambda *args: SimpleNamespace(start=lambda: started.append(args) or False)
+        plugin.Supervisor = lambda *args: SimpleNamespace(start=lambda: started.append(args), stop=lambda: None)
         previous = os.environ.pop("_HERMES_GATEWAY", None)
-        ctx = SimpleNamespace(get_config=lambda key: None, on_unload=lambda fn: None)
+        unloads = []
+        ctx = SimpleNamespace(get_config=lambda key: None, on_unload=unloads.append)
         try:
             plugin.register(ctx)
             self.assertEqual(started, [])
@@ -164,6 +165,7 @@ class RegisterTests(unittest.TestCase):
             plugin.plugin_data_dir = lambda: Path(tempfile.mkdtemp())
             plugin.register(ctx)
             self.assertEqual(len(started), 1)
+            self.assertEqual(len(unloads), 1)  # Stopped when Hermes unloads this copy.
         finally:
             plugin.Supervisor = original
             os.environ.pop("_HERMES_GATEWAY", None)
@@ -186,7 +188,7 @@ class EndToEndTests(unittest.TestCase):
     def run_supervisor(self, **settings):
         sup = supervisor.Supervisor(self.dir, supervisor.Settings(port=self.port, listen_address="127.0.0.1", **settings),
                                     lambda: self.upstream, restart_delay=0.5, wait_delay=0.5)
-        self.assertTrue(sup.start())
+        sup.start()
         self.addCleanup(sup.stop)
         return sup
 
@@ -206,12 +208,26 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual((info["kind"], info["modelSwitching"]), ("hermes", "any"))
         self.assertIn("local/qwen", info["models"])
         self.assertFalse(supervisor.ProcessLock(self.dir / "supervisor.lock").acquire())  # Held by the supervisor.
+        until(lambda: (self.dir / "pairing.json").exists())
         sup.stop()
         self.assertEqual(self.status()["state"], "stopped")
         self.assertFalse(supervisor.port_in_use("127.0.0.1", self.port))
         lock = supervisor.ProcessLock(self.dir / "supervisor.lock")
         self.assertTrue(lock.acquire())
         lock.release()
+
+    def test_a_reloaded_copy_takes_over_when_the_old_one_unloads(self):
+        # As Hermes does while the gateway starts: the new copy registers before the old one unloads.
+        old = self.run_supervisor()
+        until(lambda: self.status().get("state") == "running")
+        new = self.run_supervisor()
+        time.sleep(1)
+        self.assertTrue(supervisor.port_in_use("127.0.0.1", self.port))
+        old.stop()
+        until(lambda: self.status().get("state") == "running" and self.status().get("pid") not in (None, ""), timeout=40)
+        self.assertTrue(supervisor.port_in_use("127.0.0.1", self.port))
+        new.stop()
+        self.assertEqual(self.status()["state"], "stopped")
 
     def test_waits_for_a_busy_port_instead_of_taking_it(self):
         blocker = socket.socket()
@@ -226,7 +242,7 @@ class EndToEndTests(unittest.TestCase):
 
     def test_a_missing_api_key_is_explained(self):
         sup = supervisor.Supervisor(self.dir, supervisor.Settings(port=self.port), lambda: None, wait_delay=0.5)
-        self.assertTrue(sup.start())
+        sup.start()
         self.addCleanup(sup.stop)
         self.assertIn("API_SERVER_KEY", until(lambda: self.status().get("error")))
 

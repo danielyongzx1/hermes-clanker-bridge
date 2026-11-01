@@ -51,7 +51,6 @@ def register(ctx) -> None:
     if os.environ.get("_HERMES_GATEWAY") != "1":
         return
     supervisor = Supervisor(plugin_data_dir(), _settings(ctx), hermes_api_server, _hermes_home())
-    if not supervisor.start():
-        return
+    supervisor.start()
     ctx.on_unload(supervisor.stop)
     atexit.register(supervisor.stop)
