@@ -151,26 +151,31 @@ class RouteTests(unittest.TestCase):
 
 
 class RegisterTests(unittest.TestCase):
-    def test_only_the_gateway_starts_the_bridge(self):
-        started = []
-        original = plugin.Supervisor
-        plugin.Supervisor = lambda *args: SimpleNamespace(start=lambda: started.append(args), stop=lambda: None)
+    def test_the_gateway_is_recognised_before_it_marks_itself(self):
         previous = os.environ.pop("_HERMES_GATEWAY", None)
-        unloads = []
-        ctx = SimpleNamespace(get_config=lambda key: None, on_unload=unloads.append)
         try:
-            plugin.register(ctx)
-            self.assertEqual(started, [])
+            self.assertTrue(plugin.in_gateway(["gateway", "run"]))
+            self.assertTrue(plugin.in_gateway(["-p", "work", "gateway", "run", "--replace"]))
+            self.assertFalse(plugin.in_gateway(["chat"]))
+            self.assertFalse(plugin.in_gateway(["gateway", "restart"]))
             os.environ["_HERMES_GATEWAY"] = "1"
-            plugin.plugin_data_dir = lambda: Path(tempfile.mkdtemp())
-            plugin.register(ctx)
-            self.assertEqual(len(started), 1)
-            self.assertEqual(len(unloads), 1)  # Stopped when Hermes unloads this copy.
+            self.assertTrue(plugin.in_gateway(["chat"]))
         finally:
-            plugin.Supervisor = original
             os.environ.pop("_HERMES_GATEWAY", None)
             if previous is not None:
                 os.environ["_HERMES_GATEWAY"] = previous
+
+    def test_registering_starts_only_when_in_the_gateway_and_stops_on_unload(self):
+        calls, unloads = [], []
+        original, original_dir = plugin.Supervisor, plugin.plugin_data_dir
+        plugin.Supervisor = lambda *args: SimpleNamespace(start=lambda **kw: calls.append(kw), stop=lambda: None)
+        plugin.plugin_data_dir = lambda: Path(tempfile.mkdtemp())
+        try:
+            plugin.register(SimpleNamespace(get_config=lambda key: None, on_unload=unloads.append))
+            self.assertIs(calls[0]["when"], plugin.in_gateway)
+            self.assertEqual(len(unloads), 1)
+        finally:
+            plugin.Supervisor, plugin.plugin_data_dir = original, original_dir
 
 
 class EndToEndTests(unittest.TestCase):
@@ -228,6 +233,23 @@ class EndToEndTests(unittest.TestCase):
         self.assertTrue(supervisor.port_in_use("127.0.0.1", self.port))
         new.stop()
         self.assertEqual(self.status()["state"], "stopped")
+
+    def test_outside_the_gateway_it_gives_up_without_touching_anything(self):
+        sup = supervisor.Supervisor(self.dir / "data", supervisor.Settings(port=self.port), lambda: self.upstream)
+        sup.start(when=lambda: False, wait=0.5)
+        sup._thread.join(5)
+        self.assertFalse(sup._thread.is_alive())
+        self.assertFalse((self.dir / "data").exists())
+        sup.stop()
+
+    def test_a_late_gateway_mark_still_starts_it(self):
+        marked = threading.Event()
+        threading.Timer(1.0, marked.set).start()
+        sup = supervisor.Supervisor(self.dir, supervisor.Settings(port=self.port, listen_address="127.0.0.1"),
+                                    lambda: self.upstream, wait_delay=0.5)
+        sup.start(when=marked.is_set, wait=10)
+        self.addCleanup(sup.stop)
+        until(lambda: self.status().get("state") == "running")
 
     def test_waits_for_a_busy_port_instead_of_taking_it(self):
         blocker = socket.socket()

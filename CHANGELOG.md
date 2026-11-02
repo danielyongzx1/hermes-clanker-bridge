@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+- Fix the bridge not starting with the gateway: Hermes can load plugins before the gateway marks itself (`_HERMES_GATEWAY`), so the plugin took the gateway for another process. It now also recognises the gateway's command line (`gateway run`), and otherwise waits up to two minutes for the mark.
+
 ## 0.1.1
 
 - Fix the bridge not starting after a gateway restart: Hermes loads a plugin several times as the gateway starts, and a newer copy gave up while an older one still held the profile's lock. It now waits and takes over when the older copy unloads.

@@ -76,7 +76,7 @@ Hermes reads and writes files for a chat in its workspace folder, so Hermes's fi
 
 ## How it works
 
-- Hermes loads plugins in every process, but only the gateway runs the bridge. A lock in the data folder keeps it to one bridge per profile.
+- Hermes loads plugins in every process, but only the gateway (`gateway run`) runs the bridge. A lock in the data folder keeps it to one bridge per profile, and hands over cleanly when Hermes reloads the plugin.
 - The gateway starts `bridge/main.mjs` on Node 22 or newer: from its `PATH`, which includes the Node Hermes manages, or from Hermes's own `node` folder. Set `CLANKER_BRIDGE_NODE` to use another. The bridge gets only the bridge token, Hermes's API key and basic system variables, not the gateway's other secrets.
 - If the bridge stops, the gateway starts it again. When the gateway exits, the bridge exits too.
 - The settings page reads `/api/plugins/hermes-clanker-bridge/pairing`, which answers only Hermes Desktop or a signed-in dashboard session.

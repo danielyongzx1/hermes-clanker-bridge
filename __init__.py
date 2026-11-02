@@ -10,6 +10,7 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import sys
 from pathlib import Path
 
 from .supervisor import PLUGIN_ID, Settings, Supervisor, hermes_api_server
@@ -47,10 +48,19 @@ def _settings(ctx) -> Settings:
     )
 
 
+def in_gateway(argv=None) -> bool:
+    """Whether this process is the Hermes gateway. It sets _HERMES_GATEWAY as it starts, which can be
+    after it loads plugins, so its command line (``hermes gateway run``, or ``python -m
+    hermes_cli.main gateway run`` from its scheduled task or service) counts as well."""
+    if os.environ.get("_HERMES_GATEWAY") == "1":
+        return True
+    args = list(sys.argv[1:] if argv is None else argv)
+    return any(arg == "gateway" and args[i + 1:i + 2] == ["run"] for i, arg in enumerate(args))
+
+
 def register(ctx) -> None:
-    if os.environ.get("_HERMES_GATEWAY") != "1":
-        return
     supervisor = Supervisor(plugin_data_dir(), _settings(ctx), hermes_api_server, _hermes_home())
-    supervisor.start()
+    # Elsewhere (CLI chats, cron, tools) it gives up after a while without doing anything.
+    supervisor.start(when=in_gateway)
     ctx.on_unload(supervisor.stop)
     atexit.register(supervisor.stop)

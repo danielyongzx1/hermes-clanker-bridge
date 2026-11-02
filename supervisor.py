@@ -31,6 +31,7 @@ MIN_NODE_MAJOR = 22
 RESTART_DELAY = 5.0
 WAIT_DELAY = 10.0
 LOCK_RETRY = 2.0
+GATEWAY_WAIT = 120.0
 MAX_LOG_BYTES = 1_000_000
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 # The bridge gets these from the gateway's environment and nothing else, so provider keys and other
@@ -286,10 +287,10 @@ class Supervisor:
         self._guard = threading.Lock()
         self._locked = False
 
-    def start(self) -> None:
-        """Begins supervising in the background, once this supervisor holds the profile's lock."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        self._thread = threading.Thread(target=self._run, name=f"{PLUGIN_ID}-supervisor", daemon=True)
+    def start(self, when: Optional[Callable[[], bool]] = None, wait: float = GATEWAY_WAIT) -> None:
+        """Begins supervising in the background, once ``when`` holds (checked for up to ``wait``
+        seconds, then given up quietly) and this supervisor holds the profile's lock."""
+        self._thread = threading.Thread(target=self._run, args=(when, wait), name=f"{PLUGIN_ID}-supervisor", daemon=True)
         self._thread.start()
 
     def stop(self) -> None:
@@ -312,7 +313,12 @@ class Supervisor:
     def _wait(self, seconds: float) -> None:
         self._stopping.wait(seconds)
 
-    def _run(self) -> None:
+    def _run(self, when: Optional[Callable[[], bool]] = None, wait: float = 0.0) -> None:
+        deadline = time.monotonic() + wait
+        while when is not None and not when():
+            if time.monotonic() >= deadline or self._stopping.wait(0.5):
+                return
+        self.data_dir.mkdir(parents=True, exist_ok=True)
         # Hermes loads a plugin several times as the gateway starts, and a new copy registers before
         # the old one unloads. So the new one waits for the old to stop and release the lock, rather
         # than giving up. Another process with the lock (a second gateway) keeps it waiting too.
